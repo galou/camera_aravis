@@ -33,6 +33,8 @@
 #include <ros/duration.h>
 #include <sensor_msgs/Image.h>
 #include <std_msgs/Int64.h>
+#include <camera_control_msgs/SetExposure.h>
+#include <camera_control_msgs/SetGain.h>
 #include <sensor_msgs/image_encodings.h>
 #include <image_transport/image_transport.h>
 #include <camera_info_manager/camera_info_manager.h>
@@ -454,6 +456,92 @@ void RosReconfigure_callback(Config &config, uint32_t level)
     global.config = config;
 
 } // RosReconfigure_callback()
+
+bool RosSetExposure_callback(camera_control_msgs::SetExposure::Request & req,
+	camera_control_msgs::SetExposure::Response & res)
+{
+    // Find what the user changed.
+    const bool changedExposureAuto = (global.config.ExposureAuto != "Off");
+    const bool changedExposureTimeAbs = (global.config.ExposureTimeAbs != req.target_exposure);
+
+    // Limit params to legal values.
+    const double exposureTimeAbs = CLIP(req.target_exposure, global.configMin.ExposureTimeAbs, global.configMax.ExposureTimeAbs);
+
+    // Set params into the camera.
+    if (changedExposureTimeAbs)
+    {
+    	if (global.isImplementedExposureTimeAbs)
+	{
+	    ROS_INFO ("Set ExposureTimeAbs = %f", exposureTimeAbs);
+	    arv_device_set_float_feature_value (global.pDevice, "ExposureTimeAbs", exposureTimeAbs);
+	    res.reached_exposure = arv_device_get_float_feature_value (global.pDevice, "ExposureTimeAbs");
+	    res.success = true;
+	    global.config.ExposureTimeAbs = exposureTimeAbs;
+
+	}
+    	else
+	{
+	    ROS_INFO ("Camera does not support ExposureTimeAbs.");
+	}
+    }
+    if (changedExposureAuto)
+    {
+	if (global.isImplementedExposureAuto && global.isImplementedExposureTimeAbs)
+	{
+	    ROS_INFO ("Set ExposureAuto = Off");
+	    arv_device_set_string_feature_value (global.pDevice, "ExposureAuto", "Off");
+	    global.config.ExposureAuto = "Off";
+	}
+	else
+	{
+	    ROS_INFO ("Camera does not support ExposureAuto.");
+	}
+    }
+
+} // RosSetExposure_callback()
+
+bool RosSetGain_callback(camera_control_msgs::SetGain::Request & req,
+	camera_control_msgs::SetGain::Response & res)
+{
+    // Find what the user changed.
+    const bool changedGainAuto = (global.config.GainAuto != "Off");
+    const bool changedGain = (global.config.Gain != req.target_gain);
+
+    // Limit params to legal values.
+    const double gain = CLIP(req.target_gain, global.configMin.Gain, global.configMax.Gain);
+
+    // Set params into the camera.
+    if (changedGain)
+    {
+    	if (global.isImplementedGain)
+	{
+	    ROS_INFO ("Set gain = %f", gain);
+	    arv_camera_set_gain (global.pCamera, gain);
+	    res.reached_gain = arv_camera_get_gain(global.pCamera);
+	    res.success = true;
+	    global.config.Gain = gain;
+	}
+	else
+	{
+	    ROS_INFO ("Camera does not support Gain.");
+	}
+    }
+
+    if (changedGainAuto)
+    {
+	if (global.isImplementedGainAuto && global.isImplementedGain)
+	{
+	    ROS_INFO ("Set GainAuto = Off");
+	    arv_device_set_string_feature_value (global.pDevice, "GainAuto", "Off");
+	    global.config.GainAuto = "Off";
+	}
+	else
+	{
+	    ROS_INFO ("Camera does not support GainAuto.");
+	}
+    }
+
+} // RosSetGain_callback()
 
 
 static void NewBuffer_callback (ArvStream *pStream, ApplicationData *pApplicationdata)
@@ -1015,6 +1103,9 @@ int main(int argc, char** argv)
 		reconfigureCallback = boost::bind(&RosReconfigure_callback, _1, _2);
 		reconfigureServer.setCallback(reconfigureCallback);
 		ros::Duration(2.0).sleep();
+
+		ros::ServiceServer exposure_service = global.phNode->advertiseService("set_exposure", RosSetExposure_callback);
+		ros::ServiceServer gain_service = global.phNode->advertiseService("set_gain", RosSetGain_callback);
 
 
 		// Get parameter current values.
